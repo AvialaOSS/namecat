@@ -2,7 +2,7 @@
  * NameCat panel — Figma Rename layers layout, Chinese copy, Spiral chrome.
  * Preview | Match (optional) | Rename to | chips | Start ascending from | Cancel / Rename
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   Alert,
   Button,
@@ -10,11 +10,23 @@ import {
   Input,
   Pagehead,
   Scroll,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Stack,
+  Switch,
   Typography
 } from '@aviala-design/spiral';
+import {
+  TYPE_OPTIONS,
+  filterCandidates,
+  listCollections,
+  type CandidateScope
+} from '../filter/candidates';
 import { isStructurallyValid, validateStructure } from '../paradigm/structure';
-import type { MainToUiMessage, VariableInfo } from '../protocol/messages';
+import type { MainToUiMessage, VariableInfo, VariableResolvedType } from '../protocol/messages';
 import {
   TOKEN_CURRENT,
   TOKEN_NUMBER_ASC,
@@ -24,12 +36,22 @@ import {
 
 const post = (message: unknown) => parent.postMessage({ pluginMessage: message }, '*');
 
-const DEFAULT_HEIGHT = 560;
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 960;
+const MIN_HEIGHT = 360;
+const MAX_HEIGHT = 960;
+const DEFAULT_LIST_HEIGHT = 160;
+const MIN_LIST_HEIGHT = 80;
+const MAX_LIST_HEIGHT = 420;
 
 const clampWidth = (width: number) =>
   Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(width)));
+
+const clampHeight = (height: number) =>
+  Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.floor(height)));
+
+const clampListHeight = (height: number) =>
+  Math.max(MIN_LIST_HEIGHT, Math.min(MAX_LIST_HEIGHT, Math.floor(height)));
 
 const insertAtCursor = (
   value: string,
@@ -42,10 +64,37 @@ const insertAtCursor = (
   return value.slice(0, start) + token + value.slice(end);
 };
 
-/** Right-edge handle: drag to call figma.ui.resize(width, fixed height). */
-const WidthResizeHandle = () => {
-  const [dragging, setDragging] = useState(false);
-  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+type ResizeAxis = 'x' | 'y' | 'xy';
+
+type DragState = {
+  axis: ResizeAxis;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+};
+
+const emitResize = (width: number, height: number, persist: boolean) => {
+  post({
+    type: 'resize',
+    width: clampWidth(width),
+    height: clampHeight(height),
+    persist
+  });
+};
+
+const sizeFromDrag = (drag: DragState, event: PointerEvent) => {
+  const width =
+    drag.axis === 'y' ? drag.startWidth : drag.startWidth + (event.clientX - drag.startX);
+  const height =
+    drag.axis === 'x' ? drag.startHeight : drag.startHeight + (event.clientY - drag.startY);
+  return { width, height };
+};
+
+/** Right / bottom / corner handles → figma.ui.resize(w, h). */
+const PanelResizeHandles = () => {
+  const [dragging, setDragging] = useState<ResizeAxis | null>(null);
+  const dragRef = useRef<DragState | null>(null);
 
   useEffect(() => {
     if (!dragging) return;
@@ -53,27 +102,17 @@ const WidthResizeHandle = () => {
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
-      const next = clampWidth(drag.startWidth + (event.clientX - drag.startX));
-      post({
-        type: 'resize',
-        width: next,
-        height: DEFAULT_HEIGHT,
-        persist: false
-      });
+      const next = sizeFromDrag(drag, event);
+      emitResize(next.width, next.height, false);
     };
 
     const onUp = (event: PointerEvent) => {
       const drag = dragRef.current;
       dragRef.current = null;
-      setDragging(false);
+      setDragging(null);
       if (!drag) return;
-      const next = clampWidth(drag.startWidth + (event.clientX - drag.startX));
-      post({
-        type: 'resize',
-        width: next,
-        height: DEFAULT_HEIGHT,
-        persist: true
-      });
+      const next = sizeFromDrag(drag, event);
+      emitResize(next.width, next.height, true);
     };
 
     window.addEventListener('pointermove', onMove);
@@ -86,24 +125,106 @@ const WidthResizeHandle = () => {
     };
   }, [dragging]);
 
+  const startDrag = (axis: ResizeAxis, event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragRef.current = {
+      axis,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: window.innerWidth,
+      startHeight: window.innerHeight
+    };
+    setDragging(axis);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
   return (
-    <div
-      className="nc-resize"
-      data-dragging={dragging ? 'true' : 'false'}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="拖拽调整插件宽度"
-      title="拖拽调整宽度"
-      onPointerDown={(event) => {
-        event.preventDefault();
-        dragRef.current = {
-          startX: event.clientX,
-          startWidth: window.innerWidth
-        };
-        setDragging(true);
-        (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-      }}
-    />
+    <>
+      <div
+        className="nc-resize nc-resize--e"
+        data-dragging={dragging === 'x' ? 'true' : 'false'}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖拽调整插件宽度"
+        title="拖拽调整宽度"
+        onPointerDown={(event) => startDrag('x', event)}
+      />
+      <div
+        className="nc-resize nc-resize--s"
+        data-dragging={dragging === 'y' ? 'true' : 'false'}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="拖拽调整插件高度"
+        title="拖拽调整高度"
+        onPointerDown={(event) => startDrag('y', event)}
+      />
+      <div
+        className="nc-resize nc-resize--se"
+        data-dragging={dragging === 'xy' ? 'true' : 'false'}
+        role="separator"
+        aria-label="拖拽调整插件宽高"
+        title="拖拽调整宽高"
+        onPointerDown={(event) => startDrag('xy', event)}
+      />
+    </>
+  );
+};
+
+type ListPaneProps = {
+  height: number;
+  onHeightChange: (height: number, persist: boolean) => void;
+  children: ReactNode;
+};
+
+/** Independent height for the 待选列表 pane. */
+const ResizableCandidateList = ({ height, onHeightChange, children }: ListPaneProps) => {
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      onHeightChange(clampListHeight(drag.startHeight + (event.clientY - drag.startY)), false);
+    };
+    const onUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      setDragging(false);
+      if (!drag) return;
+      onHeightChange(clampListHeight(drag.startHeight + (event.clientY - drag.startY)), true);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [dragging, onHeightChange]);
+
+  return (
+    <div className="nc-pick-shell">
+      <div className="nc-pick" style={{ height }}>
+        {children}
+      </div>
+      <div
+        className="nc-pick-split"
+        data-dragging={dragging ? 'true' : 'false'}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="拖拽调整待选列表高度"
+        title="拖拽调整待选列表高度"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          dragRef.current = { startY: event.clientY, startHeight: height };
+          setDragging(true);
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+        }}
+      />
+    </div>
   );
 };
 
@@ -113,7 +234,15 @@ export const App = () => {
   const [match, setMatch] = useState('');
   const [renameTo, setRenameTo] = useState(TOKEN_CURRENT);
   const [start, setStart] = useState(1);
-  const [filter, setFilter] = useState('');
+  const [query, setQuery] = useState('');
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [scope, setScope] = useState<CandidateScope>('all');
+  const [collectionId, setCollectionId] = useState('all');
+  const [resolvedType, setResolvedType] = useState<VariableResolvedType | 'all'>('all');
+  const [segment, setSegment] = useState('');
+  const [requireSlash, setRequireSlash] = useState(false);
+  const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -126,18 +255,20 @@ export const App = () => {
       if (!message) return;
       if (message.type === 'ready') {
         setVariables(message.variables);
+        if (message.prefs?.listHeight) {
+          setListHeight(clampListHeight(message.prefs.listHeight));
+        }
         setError(null);
         if (!seededRef.current) {
           seededRef.current = true;
           const bound = message.variables.filter((v) => v.boundToSelection && !v.isRemote);
           if (bound.length > 0) {
             setSelectedIds(new Set(bound.map((v) => v.id)));
+            setScope('bound');
           } else {
-            // No canvas binding — pre-select nothing; user picks from the list.
             setSelectedIds(new Set());
           }
         } else {
-          // Keep ticks that still exist; drop gone ids.
           setSelectedIds((prev) => {
             const alive = new Set(message.variables.map((v) => v.id));
             return new Set([...prev].filter((id) => alive.has(id)));
@@ -164,6 +295,23 @@ export const App = () => {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  const collections = useMemo(() => listCollections(variables), [variables]);
+
+  const { items: filtered, regexError } = useMemo(
+    () =>
+      filterCandidates(variables, {
+        query,
+        caseSensitive,
+        useRegex,
+        scope,
+        collectionId,
+        resolvedType,
+        segment,
+        requireSlash
+      }),
+    [variables, query, caseSensitive, useRegex, scope, collectionId, resolvedType, segment, requireSlash]
+  );
+
   const selected = useMemo(
     () => variables.filter((v) => selectedIds.has(v.id)),
     [variables, selectedIds]
@@ -184,16 +332,6 @@ export const App = () => {
   const invalid = actionable.filter((row) => !isStructurallyValid(row.newName));
   const canRename = actionable.length > 0 && invalid.length === 0 && !busy;
 
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return variables;
-    return variables.filter(
-      (v) =>
-        v.name.toLowerCase().includes(q) ||
-        v.collectionName.toLowerCase().includes(q)
-    );
-  }, [variables, filter]);
-
   const toggle = (id: string, on: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -203,23 +341,21 @@ export const App = () => {
     });
   };
 
-  const selectBound = () => {
-    setSelectedIds(
-      new Set(variables.filter((v) => v.boundToSelection && !v.isRemote).map((v) => v.id))
-    );
-  };
-
   const selectVisible = () => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      for (const v of filtered) {
-        if (!v.isRemote) next.add(v.id);
-      }
+      for (const v of filtered) next.add(v.id);
       return next;
     });
   };
 
   const clearSelected = () => setSelectedIds(new Set());
+
+  const onListHeightChange = useCallback((height: number, persist: boolean) => {
+    const next = clampListHeight(height);
+    setListHeight(next);
+    post({ type: 'prefs', listHeight: next, persist });
+  }, []);
 
   const insertToken = (token: string) => {
     setRenameTo((value) => insertAtCursor(value, token, renameInputRef.current));
@@ -242,7 +378,7 @@ export const App = () => {
 
   return (
     <div className="nc-shell">
-      <WidthResizeHandle />
+      <PanelResizeHandles />
       <Pagehead
         title={title}
         description="按 Figma「重命名图层」方式批量改 Variables 路径。只改名，不建集合、不写值。"
@@ -270,45 +406,135 @@ export const App = () => {
           ) : null}
 
           <div className="nc-field">
-            <Typography level="caption">选择变量</Typography>
+            <Typography level="caption">待选变量</Typography>
+
+            <div className="nc-row nc-row--tight">
+              <Button
+                mode={scope === 'all' ? 'primary' : 'outline'}
+                size="small"
+                type="button"
+                onClick={() => setScope('all')}
+              >
+                全部本地
+              </Button>
+              <Button
+                mode={scope === 'bound' ? 'primary' : 'outline'}
+                size="small"
+                type="button"
+                onClick={() => setScope('bound')}
+              >
+                画板绑定
+              </Button>
+              <Select
+                value={collectionId}
+                onValueChange={(value) => setCollectionId(value)}
+              >
+                <SelectTrigger className="nc-grow" aria-label="集合筛选" size="regular">
+                  <SelectValue placeholder="全部集合" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部集合</SelectItem>
+                  {collections.map((collection) => (
+                    <SelectItem key={collection.id} value={collection.id}>
+                      {collection.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={resolvedType}
+                onValueChange={(value) =>
+                  setResolvedType(value as VariableResolvedType | 'all')
+                }
+              >
+                <SelectTrigger aria-label="类型筛选" size="regular">
+                  <SelectValue placeholder="全部类型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="nc-row nc-row--tight">
               <Input
                 className="nc-grow"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-                placeholder="筛选路径或集合"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={useRegex ? '名称正则，如 button/.+-rest' : '名称包含…'}
               />
-              <Button mode="outline" size="small" onClick={selectBound}>
-                画板绑定
-              </Button>
-              <Button mode="outline" size="small" onClick={selectVisible}>
+              <label className="nc-switch">
+                <Switch
+                  size="small"
+                  checked={caseSensitive}
+                  onCheckedChange={setCaseSensitive}
+                />
+                <Typography level="caption">区分大小写</Typography>
+              </label>
+              <label className="nc-switch">
+                <Switch size="small" checked={useRegex} onCheckedChange={setUseRegex} />
+                <Typography level="caption">正则</Typography>
+              </label>
+            </div>
+
+            <div className="nc-row nc-row--tight">
+              <Input
+                className="nc-grow"
+                value={segment}
+                onChange={(event) => setSegment(event.target.value)}
+                placeholder="路径段包含…（如 primary）"
+              />
+              <label className="nc-switch">
+                <Switch
+                  size="small"
+                  checked={requireSlash}
+                  onCheckedChange={setRequireSlash}
+                />
+                <Typography level="caption">须含 /</Typography>
+              </label>
+            </div>
+
+            {regexError ? (
+              <p className="nc-warn">正则无效：{regexError}</p>
+            ) : null}
+
+            <div className="nc-row nc-row--tight">
+              <Typography level="caption">
+                待选列表 · {filtered.length} / {variables.filter((v) => !v.isRemote).length}
+              </Typography>
+              <span className="nc-push" />
+              <Button mode="outline" size="small" type="button" onClick={selectVisible}>
                 全选可见
               </Button>
-              <Button mode="noBackground" size="small" onClick={clearSelected}>
-                清空
+              <Button mode="noBackground" size="small" type="button" onClick={clearSelected}>
+                清空勾选
               </Button>
             </div>
-            <div className="nc-pick">
+
+            <ResizableCandidateList height={listHeight} onHeightChange={onListHeightChange}>
               {filtered.length === 0 ? (
                 <div className="nc-pick-row">
-                  <Typography level="caption">没有本地变量</Typography>
+                  <Typography level="caption">没有符合筛选的变量</Typography>
                 </div>
               ) : (
                 filtered.map((variable) => (
                   <div key={variable.id} className="nc-pick-row">
                     <CheckboxInput
                       title={variable.name}
-                      description={`${variable.collectionName}${
+                      description={`${variable.collectionName} · ${variable.resolvedType}${
                         variable.boundToSelection ? ' · 画板绑定' : ''
-                      }${variable.isRemote ? ' · 远程' : ''}`}
+                      }`}
                       checked={selectedIds.has(variable.id)}
-                      disabled={variable.isRemote}
                       onCheckedChange={(value) => toggle(variable.id, value === true)}
                     />
                   </div>
                 ))
               )}
-            </div>
+            </ResizableCandidateList>
           </div>
 
           <div className="nc-field">
@@ -368,13 +594,28 @@ export const App = () => {
               placeholder="可插入下方标记"
             />
             <div className="nc-chips">
-              <Button mode="outline" size="small" type="button" onClick={() => insertToken(TOKEN_CURRENT)}>
+              <Button
+                mode="outline"
+                size="small"
+                type="button"
+                onClick={() => insertToken(TOKEN_CURRENT)}
+              >
                 当前名称
               </Button>
-              <Button mode="outline" size="small" type="button" onClick={() => insertToken(TOKEN_NUMBER_ASC)}>
+              <Button
+                mode="outline"
+                size="small"
+                type="button"
+                onClick={() => insertToken(TOKEN_NUMBER_ASC)}
+              >
                 编号 ↑
               </Button>
-              <Button mode="outline" size="small" type="button" onClick={() => insertToken(TOKEN_NUMBER_DESC)}>
+              <Button
+                mode="outline"
+                size="small"
+                type="button"
+                onClick={() => insertToken(TOKEN_NUMBER_DESC)}
+              >
                 编号 ↓
               </Button>
             </div>
@@ -395,7 +636,8 @@ export const App = () => {
 
           {invalid.length > 0 ? (
             <p className="nc-warn">
-              {invalid.length} 个新路径不符合 VarCat 结构规则（charset / 分组 / camelCase），请调整后再重命名。
+              {invalid.length}{' '}
+              个新路径不符合 VarCat 结构规则（charset / 分组 / camelCase），请调整后再重命名。
             </p>
           ) : null}
         </div>
@@ -407,12 +649,7 @@ export const App = () => {
             取消
           </Button>
           <span className="nc-push" />
-          <Button
-            mode="primary"
-            size="regular"
-            disabled={!canRename}
-            onClick={onRename}
-          >
+          <Button mode="primary" size="regular" disabled={!canRename} onClick={onRename}>
             {busy ? '重命名中…' : '重命名'}
           </Button>
         </Stack>

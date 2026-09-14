@@ -15,6 +15,10 @@ export type VariableInfo = {
   boundToSelection: boolean;
 };
 
+export type UiPrefs = {
+  listHeight: number;
+};
+
 export type RenameRequest = { variableId: string; newName: string };
 
 export type RenameSuccess = {
@@ -35,6 +39,7 @@ export type UiToMainMessage =
   | { type: 'refresh' }
   | { type: 'apply'; renames: RenameRequest[] }
   | { type: 'resize'; width: number; height: number; persist?: boolean }
+  | { type: 'prefs'; listHeight: number; persist?: boolean }
   | { type: 'close' };
 
 export type MainToUiMessage =
@@ -42,6 +47,7 @@ export type MainToUiMessage =
       type: 'ready';
       variables: VariableInfo[];
       selectionBoundCount: number;
+      prefs: UiPrefs;
     }
   | {
       type: 'applied';
