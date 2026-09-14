@@ -25,7 +25,7 @@ import {
   listCollections,
   type CandidateScope
 } from '../filter/candidates';
-import { isStructurallyValid, validateStructure } from '../paradigm/structure';
+import { validateRenameName } from '../paradigm/structure';
 import type { MainToUiMessage, VariableInfo, VariableResolvedType } from '../protocol/messages';
 import {
   TOKEN_CURRENT,
@@ -243,6 +243,7 @@ export const App = () => {
   const [segment, setSegment] = useState('');
   const [requireSlash, setRequireSlash] = useState(false);
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT);
+  const [followVarcatStructure, setFollowVarcatStructure] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -255,8 +256,13 @@ export const App = () => {
       if (!message) return;
       if (message.type === 'ready') {
         setVariables(message.variables);
-        if (message.prefs?.listHeight) {
-          setListHeight(clampListHeight(message.prefs.listHeight));
+        if (message.prefs) {
+          if (typeof message.prefs.listHeight === 'number') {
+            setListHeight(clampListHeight(message.prefs.listHeight));
+          }
+          if (typeof message.prefs.followVarcatStructure === 'boolean') {
+            setFollowVarcatStructure(message.prefs.followVarcatStructure);
+          }
         }
         setError(null);
         if (!seededRef.current) {
@@ -329,7 +335,42 @@ export const App = () => {
   );
 
   const actionable = plan.filter((row) => !row.skipped && !row.unchanged);
-  const invalid = actionable.filter((row) => !isStructurallyValid(row.newName));
+  const namesByCollection = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const variable of variables) {
+      if (variable.isRemote) continue;
+      const set = map.get(variable.collectionId) ?? new Set<string>();
+      set.add(variable.name);
+      map.set(variable.collectionId, set);
+    }
+    return map;
+  }, [variables]);
+
+  const selectedById = useMemo(() => {
+    const map = new Map(selected.map((v) => [v.id, v]));
+    return map;
+  }, [selected]);
+
+  const invalid = actionable.filter((row) => {
+    const variable = selectedById.get(row.id);
+    const siblings = new Set(namesByCollection.get(variable?.collectionId ?? '') ?? []);
+    if (variable) siblings.delete(variable.name);
+    return validateRenameName({
+      newName: row.newName,
+      followVarcatStructure,
+      siblingNames: siblings
+    }).some((issue) => issue.blocking);
+  });
+  const duplicateWarnings = actionable.filter((row) => {
+    const variable = selectedById.get(row.id);
+    const siblings = new Set(namesByCollection.get(variable?.collectionId ?? '') ?? []);
+    if (variable) siblings.delete(variable.name);
+    return validateRenameName({
+      newName: row.newName,
+      followVarcatStructure,
+      siblingNames: siblings
+    }).some((issue) => issue.code === 'duplicate');
+  });
   const canRename = actionable.length > 0 && invalid.length === 0 && !busy;
 
   const toggle = (id: string, on: boolean) => {
@@ -355,6 +396,11 @@ export const App = () => {
     const next = clampListHeight(height);
     setListHeight(next);
     post({ type: 'prefs', listHeight: next, persist });
+  }, []);
+
+  const onFollowVarcatChange = useCallback((checked: boolean) => {
+    setFollowVarcatStructure(checked);
+    post({ type: 'prefs', followVarcatStructure: checked, persist: true });
   }, []);
 
   const insertToken = (token: string) => {
@@ -546,19 +592,31 @@ export const App = () => {
                 </div>
               ) : (
                 plan.map((row) => {
-                  const bad =
-                    !row.skipped && !row.unchanged && !isStructurallyValid(row.newName);
+                  const variable = selectedById.get(row.id);
+                  const siblings = new Set(
+                    namesByCollection.get(variable?.collectionId ?? '') ?? []
+                  );
+                  if (variable) siblings.delete(variable.name);
+                  const issues =
+                    row.skipped || row.unchanged
+                      ? []
+                      : validateRenameName({
+                          newName: row.newName,
+                          followVarcatStructure,
+                          siblingNames: siblings
+                        });
+                  const bad = issues.some((issue) => issue.blocking);
+                  const warn = !bad && issues.some((issue) => issue.code === 'duplicate');
                   return (
                     <div
                       key={row.id}
                       className="nc-preview-row"
                       data-skip={row.skipped || row.unchanged ? 'true' : 'false'}
                       data-bad={bad ? 'true' : 'false'}
+                      data-warn={warn ? 'true' : 'false'}
                       title={
-                        bad
-                          ? validateStructure(row.newName)
-                              .map((issue) => issue.message)
-                              .join('；')
+                        issues.length > 0
+                          ? issues.map((issue) => issue.message).join('；')
                           : undefined
                       }
                     >
@@ -634,10 +692,35 @@ export const App = () => {
             />
           </div>
 
+          <div className="nc-field">
+            <label className="nc-switch nc-switch--block">
+              <Switch
+                size="small"
+                checked={followVarcatStructure}
+                onCheckedChange={onFollowVarcatChange}
+              />
+              <span>
+                <Typography level="caption">遵循 VarCat 结构</Typography>
+                <Typography level="caption">
+                  {followVarcatStructure
+                    ? '开启：校验 charset / 分组 / camelCase'
+                    : '关闭：自由命名，仅拦截空名称'}
+                </Typography>
+              </span>
+            </label>
+          </div>
+
           {invalid.length > 0 ? (
             <p className="nc-warn">
               {invalid.length}{' '}
-              个新路径不符合 VarCat 结构规则（charset / 分组 / camelCase），请调整后再重命名。
+              {followVarcatStructure
+                ? '个新路径不符合 VarCat 结构规则（charset / 分组 / camelCase），请调整后再重命名。'
+                : '个名称为空，请调整后再重命名。'}
+            </p>
+          ) : null}
+          {duplicateWarnings.length > 0 ? (
+            <p className="nc-hint">
+              {duplicateWarnings.length} 个新名称与同集合现有变量重复（仅提示，不阻止重命名）。
             </p>
           ) : null}
         </div>

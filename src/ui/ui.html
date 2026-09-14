@@ -191,6 +191,9 @@
       .nc-preview-row[data-bad='true'] .nc-preview-new {
         color: var(--text-text-error-primary, #bf2300);
       }
+      .nc-preview-row[data-warn='true'] .nc-preview-new {
+        color: var(--text-text-warning-primary, #a35b00);
+      }
       .nc-preview-old {
         color: var(--typography-caption-fg, #616060);
         overflow: hidden;
@@ -251,6 +254,21 @@
         gap: var(--gap-inside, 4px);
         flex: none;
         white-space: nowrap;
+      }
+      .nc-switch--block {
+        align-items: flex-start;
+        white-space: normal;
+      }
+      .nc-switch--block > span {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .nc-hint {
+        color: var(--text-text-warning-primary, #a35b00);
+        font-size: var(--typography-caption-size, 0.75rem);
+        margin: 0;
       }
       .nc-pick-row {
         display: flex;

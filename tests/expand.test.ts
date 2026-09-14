@@ -8,7 +8,7 @@ import {
   descendingNumber,
   expandRenameTemplate
 } from '../src/rename/expand';
-import { isStructurallyValid, validateStructure } from '../src/paradigm/structure';
+import { isRenameAllowed, isStructurallyValid, validateRenameName, validateStructure } from '../src/paradigm/structure';
 
 describe('expandRenameTemplate', () => {
   it('replaces current-name and both number directions', () => {
@@ -93,5 +93,29 @@ describe('structure validation', () => {
     expect(validateStructure('button/primary background').length).toBeGreaterThan(0);
     expect(validateStructure('noGroup').some((i) => i.code === 'missingGroup')).toBe(true);
     expect(validateStructure('Button/Primary').some((i) => i.code === 'slotCase')).toBe(true);
+  });
+});
+
+describe('free naming gate', () => {
+  it('blocks empty names in free mode, allows free-form paths', () => {
+    expect(isRenameAllowed('My Free Name!', false)).toBe(true);
+    expect(isRenameAllowed('noGroup', false)).toBe(true);
+    expect(isRenameAllowed('   ', false)).toBe(false);
+    expect(isRenameAllowed('', false)).toBe(false);
+  });
+
+  it('still enforces structure when followVarcatStructure is on', () => {
+    expect(isRenameAllowed('My Free Name!', true)).toBe(false);
+    expect(isRenameAllowed('button/primary-background-rest', true)).toBe(true);
+  });
+
+  it('warns duplicates without blocking', () => {
+    const issues = validateRenameName({
+      newName: 'button/primary-background-rest',
+      followVarcatStructure: false,
+      siblingNames: new Set(['button/primary-background-rest'])
+    });
+    expect(issues.some((i) => i.code === 'duplicate' && !i.blocking)).toBe(true);
+    expect(issues.every((i) => i.code === 'duplicate' || !i.blocking)).toBe(true);
   });
 });

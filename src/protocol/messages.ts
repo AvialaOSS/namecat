@@ -17,6 +17,8 @@ export type VariableInfo = {
 
 export type UiPrefs = {
   listHeight: number;
+  /** When true (default), enforce VarCat path structure on rename. */
+  followVarcatStructure: boolean;
 };
 
 export type RenameRequest = { variableId: string; newName: string };
@@ -39,7 +41,12 @@ export type UiToMainMessage =
   | { type: 'refresh' }
   | { type: 'apply'; renames: RenameRequest[] }
   | { type: 'resize'; width: number; height: number; persist?: boolean }
-  | { type: 'prefs'; listHeight: number; persist?: boolean }
+  | {
+      type: 'prefs';
+      listHeight?: number;
+      followVarcatStructure?: boolean;
+      persist?: boolean;
+    }
   | { type: 'close' };
 
 export type MainToUiMessage =

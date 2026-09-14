@@ -6,6 +6,7 @@ declare const UI_HTML: string;
 const DEFAULT_WIDTH = 400;
 const DEFAULT_HEIGHT = 560;
 const DEFAULT_LIST_HEIGHT = 160;
+const DEFAULT_FOLLOW_VARCAT = true;
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 960;
 const MIN_HEIGHT = 360;
@@ -14,7 +15,12 @@ const MIN_LIST_HEIGHT = 80;
 const MAX_LIST_HEIGHT = 420;
 const SIZE_KEY = 'namecat.ui.size';
 
-type StoredSize = { w: number; h: number; listHeight: number };
+type StoredPrefs = {
+  w: number;
+  h: number;
+  listHeight: number;
+  followVarcatStructure: boolean;
+};
 
 const clampWidth = (width: number) =>
   Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(width)));
@@ -29,40 +35,54 @@ const post = (message: MainToUiMessage) => {
   figma.ui.postMessage(message);
 };
 
-let prefs: StoredSize = {
+let prefs: StoredPrefs = {
   w: DEFAULT_WIDTH,
   h: DEFAULT_HEIGHT,
-  listHeight: DEFAULT_LIST_HEIGHT
+  listHeight: DEFAULT_LIST_HEIGHT,
+  followVarcatStructure: DEFAULT_FOLLOW_VARCAT
 };
 
-const readStoredSize = async (): Promise<StoredSize> => {
+const readStoredPrefs = async (): Promise<StoredPrefs> => {
   const stored = await figma.clientStorage.getAsync(SIZE_KEY);
-  const next: StoredSize = {
+  const next: StoredPrefs = {
     w: DEFAULT_WIDTH,
     h: DEFAULT_HEIGHT,
-    listHeight: DEFAULT_LIST_HEIGHT
+    listHeight: DEFAULT_LIST_HEIGHT,
+    followVarcatStructure: DEFAULT_FOLLOW_VARCAT
   };
   if (typeof stored === 'number' && Number.isFinite(stored)) {
     next.w = clampWidth(stored);
     return next;
   }
   if (stored && typeof stored === 'object') {
-    const row = stored as { w?: unknown; h?: unknown; listHeight?: unknown };
+    const row = stored as {
+      w?: unknown;
+      h?: unknown;
+      listHeight?: unknown;
+      followVarcatStructure?: unknown;
+    };
     if (typeof row.w === 'number' && Number.isFinite(row.w)) next.w = clampWidth(row.w);
     if (typeof row.h === 'number' && Number.isFinite(row.h)) next.h = clampHeight(row.h);
     if (typeof row.listHeight === 'number' && Number.isFinite(row.listHeight)) {
       next.listHeight = clampListHeight(row.listHeight);
     }
+    if (typeof row.followVarcatStructure === 'boolean') {
+      next.followVarcatStructure = row.followVarcatStructure;
+    }
   }
   return next;
 };
 
-const writeStoredSize = async (patch: Partial<StoredSize>) => {
+const writeStoredPrefs = async (patch: Partial<StoredPrefs>) => {
   prefs = {
     w: patch.w !== undefined ? clampWidth(patch.w) : prefs.w,
     h: patch.h !== undefined ? clampHeight(patch.h) : prefs.h,
     listHeight:
-      patch.listHeight !== undefined ? clampListHeight(patch.listHeight) : prefs.listHeight
+      patch.listHeight !== undefined ? clampListHeight(patch.listHeight) : prefs.listHeight,
+    followVarcatStructure:
+      patch.followVarcatStructure !== undefined
+        ? patch.followVarcatStructure
+        : prefs.followVarcatStructure
   };
   await figma.clientStorage.setAsync(SIZE_KEY, prefs);
 };
@@ -74,12 +94,15 @@ const pushSnapshot = async () => {
     type: 'ready',
     variables,
     selectionBoundCount: [...boundIds].filter((id) => variables.some((v) => v.id === id)).length,
-    prefs: { listHeight: prefs.listHeight }
+    prefs: {
+      listHeight: prefs.listHeight,
+      followVarcatStructure: prefs.followVarcatStructure
+    }
   });
 };
 
 const main = async () => {
-  prefs = await readStoredSize();
+  prefs = await readStoredPrefs();
   figma.showUI(UI_HTML, { width: prefs.w, height: prefs.h, themeColors: true });
 
   figma.on('selectionchange', () => {
@@ -121,18 +144,30 @@ const main = async () => {
             const height = clampHeight(raw.height || DEFAULT_HEIGHT);
             figma.ui.resize(width, height);
             if (raw.persist !== false) {
-              await writeStoredSize({ w: width, h: height });
+              await writeStoredPrefs({ w: width, h: height });
             } else {
               prefs = { ...prefs, w: width, h: height };
             }
             break;
           }
           case 'prefs': {
-            const listHeight = clampListHeight(raw.listHeight);
+            const patch: Partial<StoredPrefs> = {};
+            if (typeof raw.listHeight === 'number') patch.listHeight = raw.listHeight;
+            if (typeof raw.followVarcatStructure === 'boolean') {
+              patch.followVarcatStructure = raw.followVarcatStructure;
+            }
             if (raw.persist !== false) {
-              await writeStoredSize({ listHeight });
+              await writeStoredPrefs(patch);
             } else {
-              prefs = { ...prefs, listHeight };
+              prefs = {
+                ...prefs,
+                ...(patch.listHeight !== undefined
+                  ? { listHeight: clampListHeight(patch.listHeight) }
+                  : {}),
+                ...(patch.followVarcatStructure !== undefined
+                  ? { followVarcatStructure: patch.followVarcatStructure }
+                  : {})
+              };
             }
             break;
           }

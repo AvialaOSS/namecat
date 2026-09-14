@@ -2,11 +2,20 @@
  * Structural path rules shared with VarCat (charset, group, camelCase slots).
  * Closed vocabulary / template axes stay in VarCat — NameCat only blocks
  * names that cannot be legal Figma Variable paths under the paradigm charset.
+ *
+ * Free-naming mode skips paradigm checks and only applies Figma-safe basics.
  */
 
 export type StructureIssue = {
   code: 'empty' | 'illegalChar' | 'emptySegment' | 'missingGroup' | 'slotCase';
   message: string;
+};
+
+export type NamingIssue = {
+  code: 'empty' | 'duplicate' | 'structure';
+  message: string;
+  /** Duplicates warn; they never hard-block Apply. Structure/empty can block. */
+  blocking: boolean;
 };
 
 const LEGAL_PATH_PATTERN = /^[a-zA-Z0-9/-]+$/;
@@ -58,3 +67,62 @@ export const validateStructure = (path: string): StructureIssue[] => {
 };
 
 export const isStructurallyValid = (path: string): boolean => validateStructure(path).length === 0;
+
+/** Figma-safe floor: reject empty / whitespace-only names only. */
+export const validateFigmaSafeName = (name: string): NamingIssue[] => {
+  if (!String(name).trim()) {
+    return [{ code: 'empty', message: '名称为空', blocking: true }];
+  }
+  return [];
+};
+
+export type RenameGateInput = {
+  newName: string;
+  /** When true, enforce VarCat structure. When false, Figma-safe only. */
+  followVarcatStructure: boolean;
+  /** Other names in the same collection (excluding this variable's current name). */
+  siblingNames?: ReadonlySet<string>;
+};
+
+/**
+ * Rename gate used by the panel.
+ * - followVarcatStructure on → structure issues are blocking
+ * - off → only empty names block; duplicates are advisory
+ */
+export const validateRenameName = (input: RenameGateInput): NamingIssue[] => {
+  const issues: NamingIssue[] = [];
+  const name = String(input.newName);
+
+  if (input.followVarcatStructure) {
+    for (const issue of validateStructure(name)) {
+      issues.push({
+        code: issue.code === 'empty' ? 'empty' : 'structure',
+        message: issue.message,
+        blocking: true
+      });
+    }
+  } else {
+    issues.push(...validateFigmaSafeName(name));
+  }
+
+  if (input.siblingNames && name.trim() && input.siblingNames.has(name)) {
+    issues.push({
+      code: 'duplicate',
+      message: '同集合已有相同名称',
+      blocking: false
+    });
+  }
+
+  return issues;
+};
+
+/** Blocking check for Apply — paradigm or free floor. */
+export const isRenameAllowed = (
+  newName: string,
+  followVarcatStructure: boolean
+): boolean => {
+  if (!followVarcatStructure) {
+    return validateFigmaSafeName(newName).every((issue) => !issue.blocking);
+  }
+  return isStructurallyValid(newName);
+};
