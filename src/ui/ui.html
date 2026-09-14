@@ -26,10 +26,39 @@
         --list-bg: var(--box-box-normal-background-whiteonly, #ffffff);
         --card-bg: var(--box-box-normal-background-whiteonly, #ffffff);
         --list-item-selected-bg: var(--box-box-theme-lightbackground, #ffe9e3);
+        position: relative;
         display: flex;
         flex-direction: column;
         height: 100%;
         min-width: 0;
+      }
+
+      /* Right-edge drag handle — stretch plugin width via figma.ui.resize. */
+      .nc-resize {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 8px;
+        height: 100%;
+        z-index: 30;
+        cursor: ew-resize;
+        touch-action: none;
+        background: transparent;
+      }
+      .nc-resize::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        right: 2px;
+        width: 3px;
+        height: 28px;
+        margin-top: -14px;
+        border-radius: 2px;
+        background: var(--border-border-normal-2, #e0dfdf);
+      }
+      .nc-resize:hover::after,
+      .nc-resize[data-dragging='true']::after {
+        background: var(--text-text-theme-primary-black, #bf2300);
       }
       .nc-shell > .aviala-pagehead {
         flex: none;

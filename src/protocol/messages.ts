@@ -34,7 +34,7 @@ export type UiToMainMessage =
   | { type: 'init' }
   | { type: 'refresh' }
   | { type: 'apply'; renames: RenameRequest[] }
-  | { type: 'resize'; width: number; height: number }
+  | { type: 'resize'; width: number; height: number; persist?: boolean }
   | { type: 'close' };
 
 export type MainToUiMessage =

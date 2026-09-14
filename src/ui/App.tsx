@@ -24,6 +24,13 @@ import {
 
 const post = (message: unknown) => parent.postMessage({ pluginMessage: message }, '*');
 
+const DEFAULT_HEIGHT = 560;
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 960;
+
+const clampWidth = (width: number) =>
+  Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(width)));
+
 const insertAtCursor = (
   value: string,
   token: string,
@@ -33,6 +40,71 @@ const insertAtCursor = (
   const start = input.selectionStart ?? value.length;
   const end = input.selectionEnd ?? value.length;
   return value.slice(0, start) + token + value.slice(end);
+};
+
+/** Right-edge handle: drag to call figma.ui.resize(width, fixed height). */
+const WidthResizeHandle = () => {
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    if (!dragging) return;
+
+    const onMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const next = clampWidth(drag.startWidth + (event.clientX - drag.startX));
+      post({
+        type: 'resize',
+        width: next,
+        height: DEFAULT_HEIGHT,
+        persist: false
+      });
+    };
+
+    const onUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      setDragging(false);
+      if (!drag) return;
+      const next = clampWidth(drag.startWidth + (event.clientX - drag.startX));
+      post({
+        type: 'resize',
+        width: next,
+        height: DEFAULT_HEIGHT,
+        persist: true
+      });
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [dragging]);
+
+  return (
+    <div
+      className="nc-resize"
+      data-dragging={dragging ? 'true' : 'false'}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖拽调整插件宽度"
+      title="拖拽调整宽度"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        dragRef.current = {
+          startX: event.clientX,
+          startWidth: window.innerWidth
+        };
+        setDragging(true);
+        (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+      }}
+    />
+  );
 };
 
 export const App = () => {
@@ -170,6 +242,7 @@ export const App = () => {
 
   return (
     <div className="nc-shell">
+      <WidthResizeHandle />
       <Pagehead
         title={title}
         description="按 Figma「重命名图层」方式批量改 Variables 路径。只改名，不建集合、不写值。"
