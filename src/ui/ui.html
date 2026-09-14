@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>NameCat · 重命名变量</title>
+    <style id="spiral-styles">/* __SPIRAL_CSS__ */</style>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body,
+      #root,
+      .nc-root {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--color-background, #f9f8f8);
+        overflow: hidden;
+      }
+
+      .nc-shell {
+        --list-bg: var(--box-box-normal-background-whiteonly, #ffffff);
+        --card-bg: var(--box-box-normal-background-whiteonly, #ffffff);
+        --list-item-selected-bg: var(--box-box-theme-lightbackground, #ffe9e3);
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-width: 0;
+      }
+
+      /* Edge / corner drag handles → figma.ui.resize(w, h). */
+      .nc-resize {
+        position: absolute;
+        z-index: 30;
+        touch-action: none;
+        background: transparent;
+      }
+      .nc-resize--e {
+        top: 0;
+        right: 0;
+        width: 8px;
+        height: calc(100% - 14px);
+        cursor: ew-resize;
+      }
+      .nc-resize--e::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        right: 2px;
+        width: 3px;
+        height: 28px;
+        margin-top: -14px;
+        border-radius: 2px;
+        background: var(--border-border-normal-2, #e0dfdf);
+      }
+      .nc-resize--s {
+        left: 0;
+        bottom: 0;
+        width: calc(100% - 14px);
+        height: 8px;
+        cursor: ns-resize;
+      }
+      .nc-resize--s::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: 2px;
+        width: 28px;
+        height: 3px;
+        margin-left: -14px;
+        border-radius: 2px;
+        background: var(--border-border-normal-2, #e0dfdf);
+      }
+      .nc-resize--se {
+        right: 0;
+        bottom: 0;
+        width: 14px;
+        height: 14px;
+        cursor: nwse-resize;
+      }
+      .nc-resize--se::after {
+        content: '';
+        position: absolute;
+        right: 3px;
+        bottom: 3px;
+        width: 8px;
+        height: 8px;
+        border-right: 2px solid var(--border-border-normal-2, #e0dfdf);
+        border-bottom: 2px solid var(--border-border-normal-2, #e0dfdf);
+        border-radius: 0 0 1px 0;
+      }
+      .nc-resize:hover::after,
+      .nc-resize[data-dragging='true']::after {
+        background: var(--text-text-theme-primary-black, #bf2300);
+        border-color: var(--text-text-theme-primary-black, #bf2300);
+      }
+      .nc-resize--se:hover::after,
+      .nc-resize--se[data-dragging='true']::after {
+        background: transparent;
+      }
+      .nc-shell > .aviala-pagehead {
+        flex: none;
+        padding-inline: var(--padding-big, 14px);
+      }
+
+      .nc-body {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+      .nc-body-inner {
+        padding: var(--padding-middle, 10px) var(--padding-big, 14px)
+          var(--padding-big, 14px);
+        display: flex;
+        flex-direction: column;
+        gap: var(--gap-component-space, 8px);
+      }
+
+      .nc-foot {
+        flex: none;
+        padding: var(--padding-middle, 10px) var(--padding-big, 14px);
+        background: var(--box-box-normal-background-whiteonly, #ffffff);
+        border-top: 1px solid var(--border-border-normal-1, #f0efef);
+      }
+
+      .nc-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--gap-component-space, 8px);
+        min-width: 0;
+      }
+      .nc-row--tight {
+        gap: var(--gap-inside, 4px);
+      }
+      .nc-grow {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      .nc-push {
+        margin-inline-start: auto;
+      }
+
+      .nc-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--gap-inside, 4px);
+        min-width: 0;
+      }
+      .nc-field label {
+        color: var(--typography-caption-fg, #616060);
+        font-size: var(--typography-caption-size, 0.75rem);
+      }
+
+      .nc-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--gap-inside, 4px);
+      }
+
+      .nc-preview {
+        flex: 1 1 auto;
+        min-height: 120px;
+        max-height: 220px;
+        overflow: auto;
+        background: var(--box-box-normal-background-whiteonly, #ffffff);
+        border: 1px solid var(--border-border-normal-1, #f0efef);
+        border-radius: 6px;
+      }
+      .nc-preview-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: var(--gap-inside, 4px);
+        align-items: baseline;
+        padding: 4px var(--padding-middle, 10px);
+        border-bottom: 1px solid var(--border-border-normal-1, #f0efef);
+        font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+        font-size: var(--typography-caption-size, 0.75rem);
+        line-height: 1.25rem;
+      }
+      .nc-preview-row:last-child {
+        border-bottom: none;
+      }
+      .nc-preview-row[data-skip='true'] {
+        opacity: 0.45;
+      }
+      .nc-preview-row[data-bad='true'] .nc-preview-new {
+        color: var(--text-text-error-primary, #bf2300);
+      }
+      .nc-preview-row[data-warn='true'] .nc-preview-new {
+        color: var(--text-text-warning-primary, #a35b00);
+      }
+      .nc-preview-old {
+        color: var(--typography-caption-fg, #616060);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .nc-preview-arrow {
+        color: var(--typography-caption-fg, #616060);
+      }
+      .nc-preview-new {
+        color: var(--text-text-theme-primary-black, #bf2300);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nc-pick {
+        max-height: none;
+        height: 160px;
+        overflow: auto;
+        background: var(--box-box-normal-background-whiteonly, #ffffff);
+        border: 1px solid var(--border-border-normal-1, #f0efef);
+        border-radius: 6px 6px 0 0;
+      }
+      .nc-pick-shell {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .nc-pick-split {
+        height: 8px;
+        cursor: ns-resize;
+        touch-action: none;
+        border: 1px solid var(--border-border-normal-1, #f0efef);
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+        background: var(--box-box-normal-background-whiteonly, #ffffff);
+        position: relative;
+      }
+      .nc-pick-split::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 28px;
+        height: 3px;
+        margin: -1.5px 0 0 -14px;
+        border-radius: 2px;
+        background: var(--border-border-normal-2, #e0dfdf);
+      }
+      .nc-pick-split:hover::after,
+      .nc-pick-split[data-dragging='true']::after {
+        background: var(--text-text-theme-primary-black, #bf2300);
+      }
+      .nc-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--gap-inside, 4px);
+        flex: none;
+        white-space: nowrap;
+      }
+      .nc-switch--block {
+        align-items: flex-start;
+        white-space: normal;
+      }
+      .nc-switch--block > span {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .nc-hint {
+        color: var(--text-text-warning-primary, #a35b00);
+        font-size: var(--typography-caption-size, 0.75rem);
+        margin: 0;
+      }
+      .nc-pick-row {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--gap-inside, 4px);
+        padding: 4px var(--padding-middle, 10px);
+        min-width: 0;
+      }
+      .nc-pick-meta {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      .nc-mono {
+        font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+        font-size: var(--typography-caption-size, 0.75rem);
+        word-break: break-all;
+      }
+      .nc-warn {
+        color: var(--text-text-error-primary, #bf2300);
+        font-size: var(--typography-caption-size, 0.75rem);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="ui.js"></script>
+  </body>
+</html>
